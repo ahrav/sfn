@@ -70,7 +70,7 @@ typedef struct
   int num_words_in_dictionary;
 
   /* Aho-Corasick root node */
-  ac_node *root;
+  AhoCorasick *aho;
 
   /* TODO Global Allowlist */
   allowlist_t *allowlist;

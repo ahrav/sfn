@@ -1,157 +1,166 @@
 #include "ahocorasick.h"
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
 
-/**
- * Create a new node and return a pointer to it.
- * The node is initialized with default values.
- */
-ac_node *ahocorasick_create_node()
+static int add_state(AhoCorasick *ac)
 {
-    ac_node *new_node = (ac_node *)malloc(sizeof(ac_node));
-    if (new_node == NULL)
-    {
-        return NULL;
-    }
-    new_node->root = 0;
-    new_node->end_of_word = 0;
-    new_node->index = -1;
-    new_node->failure = NULL;
-    for (int i = 0; i < MAX_CHARS; i++)
-    {
-        new_node->child[i] = NULL;
-    }
-    return new_node;
+  if (ac->num_states == ac->capacity)
+  {
+    ac->capacity *= 2;
+    ac->states = (ACState *)realloc(ac->states, ac->capacity * sizeof(ACState));
+  }
+  int s = ac->num_states++;
+  for (int i = 0; i < MAX_CHARS; i++)
+  {
+    ac->states[s].next[i] = -1;
+  }
+  ac->states[s].fail = 0;
+  ac->states[s].dict_link = -1;
+  ac->states[s].out = -1;
+  return s;
 }
 
-void ahocorasick_insert(ac_node *root, const unsigned char *word, const int index, int case_insensitive)
+void init_aho(AhoCorasick *ac)
 {
-    ac_node *current = root;
-    for (int i = 0; word[i] != '\0'; i++)
-    {
-        unsigned char char_code = case_insensitive ? tolower(word[i]) : word[i];
-        if (current->child[char_code] == NULL)
-        {
-            current->child[char_code] = ahocorasick_create_node();
-        }
-        current = current->child[char_code];
-    }
-    current->end_of_word = 1;
-    current->index = index;
+  ac->num_states = 0;
+  ac->capacity = 16;
+  ac->patterns = 0;
+  ac->states = (ACState *)malloc(ac->capacity * sizeof(ACState));
+  add_state(ac); // state 0 is the root
 }
 
-void ahocorasick_build_failure_links(ac_node *root)
+void insert_pattern(AhoCorasick *ac, const unsigned char *pattern, int index, int case_insensitive)
 {
-    int queue_capacity = 10; // Initial queue capacity
-    int queue_size = 0;
-    ac_node **queue = (ac_node **)malloc(queue_capacity * sizeof(ac_node *));
-    int front = 0, rear = 0;
-
-    queue[rear++] = root;
-    queue_size++;
-
-    while (front < rear)
+  int current = 0;
+  for (int i = 0; pattern[i] != '\0'; i++)
+  {
+    unsigned char c = pattern[i];
+    if (case_insensitive)
     {
-        ac_node *current = queue[front++];
-        for (int i = 0; i < MAX_CHARS; i++)
-        {
-            ac_node *child = current->child[i];
-            if (child && current == root)
-            {
-                child->failure = root;
-            }
-            else if (child)
-            {
-                ac_node *failure = current->failure;
-                while (failure && !failure->child[i])
-                {
-                    failure = failure->failure;
-                }
-                child->failure = failure ? failure->child[i] : root;
-            }
-
-            if (child)
-            {
-                if (queue_size == queue_capacity)
-                {
-                    queue_capacity *= 2;
-                    queue = (ac_node **)realloc(queue, queue_capacity * sizeof(ac_node *));
-                }
-                queue[rear++] = child;
-                queue_size++;
-            }
-        }
+      c = (unsigned char)tolower(c);
     }
-    free(queue);
+    if (ac->states[current].next[c] == -1)
+    {
+      ac->states[current].next[c] = add_state(ac);
+    }
+    current = ac->states[current].next[c];
+  }
+  ac->states[current].out = index;
+  ac->patterns++;
 }
 
-int ahocorasick_find_matches(ac_node *root, const unsigned char *text, int **matchIndices, int case_insensitive)
+void build_failure_links(AhoCorasick *ac)
 {
-    ac_node *current = root;
-    int len = strlen((char *)text);
-    int matchIndicesCapacity = 10; // Initial capacity
-    int numMatches = 0;
-    *matchIndices = (int *)malloc(matchIndicesCapacity * sizeof(int));
+  int *queue = (int *)malloc(ac->num_states * sizeof(int));
+  int front = 0, rear = 0;
 
-    for (int i = 0; i < len; i++)
+  // Initialize transitions for root
+  for (int c = 0; c < MAX_CHARS; c++)
+  {
+    int nxt = ac->states[0].next[c];
+    if (nxt != -1)
     {
-        unsigned char char_code = case_insensitive ? tolower(text[i]) : text[i];
-        while (current && !current->child[char_code])
-        {
-            current = current->failure;
-        }
-        current = current ? current->child[char_code] : root;
-        ac_node *temp = current;
-        while (temp && temp->end_of_word)
-        {
-            if (numMatches == matchIndicesCapacity)
-            {
-                matchIndicesCapacity *= 2;
-                *matchIndices = (int *)realloc(*matchIndices, matchIndicesCapacity * sizeof(int));
-            }
-            (*matchIndices)[numMatches++] = temp->index;
-            temp = temp->failure;
-        }
+      ac->states[nxt].fail = 0;
+      queue[rear++] = nxt;
+    }
+    else
+    {
+      ac->states[0].next[c] = 0; // loop back to root
+    }
+  }
+
+  // BFS to build failure links
+  while (front < rear)
+  {
+    int s = queue[front++];
+    int f = ac->states[s].fail;
+
+    // If fail state is an output, inherit dict_link
+    if (ac->states[f].out != -1 && ac->states[s].out == -1)
+    {
+      ac->states[s].dict_link = f;
     }
 
-    return numMatches;
+    for (int c = 0; c < MAX_CHARS; c++)
+    {
+      int nxt = ac->states[s].next[c];
+      if (nxt != -1)
+      {
+        ac->states[nxt].fail = ac->states[f].next[c];
+        // Inherit dict_link if fail state leads to a pattern
+        if (ac->states[ac->states[nxt].fail].out != -1 && ac->states[nxt].out == -1)
+        {
+          ac->states[nxt].dict_link = ac->states[nxt].fail;
+        }
+        else if (ac->states[ac->states[nxt].fail].dict_link != -1 && ac->states[nxt].out == -1)
+        {
+          ac->states[nxt].dict_link = ac->states[ac->states[nxt].fail].dict_link;
+        }
+        queue[rear++] = nxt;
+      }
+      else
+      {
+        // Precompute next transition for missing edge
+        ac->states[s].next[c] = ac->states[f].next[c];
+      }
+    }
+  }
+
+  free(queue);
 }
 
-void ahocorasick_free_trei(ac_node *current)
+int aho_find_matches(AhoCorasick *ac, const unsigned char *text, int **matchIndices, int case_insensitive)
 {
-    if (current == NULL)
-    {
-        return;
-    }
-    for (int i = 0; i < MAX_CHARS; i++)
-    {
-        if (current->child[i] != NULL)
-        {
-            ahocorasick_free_trei(current->child[i]);
-        }
-    }
+  int s = 0;
+  int length = (int)strlen((const char *)text);
+  int capacity = 16;
+  int count = 0;
+  *matchIndices = (int *)malloc(capacity * sizeof(int));
 
-    free(current);
+  for (int i = 0; i < length; i++)
+  {
+    unsigned char c = text[i];
+    if (case_insensitive)
+    {
+      c = (unsigned char)tolower(c);
+    }
+    s = ac->states[s].next[c];
+
+    // Check if this state or any dict_linked state is an output
+    if (ac->states[s].out != -1)
+    {
+      if (count == capacity)
+      {
+        capacity *= 2;
+        *matchIndices = (int *)realloc(*matchIndices, capacity * sizeof(int));
+      }
+      (*matchIndices)[count++] = ac->states[s].out;
+    }
+    int dl = ac->states[s].dict_link;
+    while (dl != -1)
+    {
+      if (ac->states[dl].out != -1)
+      {
+        if (count == capacity)
+        {
+          capacity *= 2;
+          *matchIndices = (int *)realloc(*matchIndices, capacity * sizeof(int));
+        }
+        (*matchIndices)[count++] = ac->states[dl].out;
+      }
+      dl = ac->states[dl].dict_link;
+    }
+  }
+
+  return count;
 }
 
-ac_node *ahocorasick_create_trie(const unsigned char **dictionary, int numWords, int case_insensitive)
+void free_aho(AhoCorasick *ac)
 {
-    ac_node *root_node = ahocorasick_create_node();
-    if (root_node == NULL)
-    {
-        return NULL;
-    }
-    int max_word_length = 0;
-
-    for (int i = 0; i < numWords; i++)
-    {
-        int word_length = strlen((const char *)dictionary[i]);
-        if (word_length > max_word_length)
-        {
-            max_word_length = word_length;
-        }
-        ahocorasick_insert(root_node, dictionary[i], i, case_insensitive);
-    }
-
-    ahocorasick_build_failure_links(root_node);
-
-    return root_node;
+  free(ac->states);
+  ac->states = NULL;
+  ac->num_states = 0;
+  ac->capacity = 0;
+  ac->patterns = 0;
 }
