@@ -10,19 +10,19 @@
 /* The ACState represents a single state in the Aho-Corasick automaton */
 typedef struct
 {
-  int next[MAX_CHARS]; // Transitions for each character
-  int fail;            // Failure link
-  int dict_link;       // Dictionary link for suffix matches
-  int out;             // Pattern index if this state corresponds to an end-of-pattern (-1 if none)
+    int next[MAX_CHARS]; // Transitions for each character
+    int fail;            // Failure link
+    int dict_link;       // Dictionary link for suffix matches
+    int out;             // Pattern index if this state corresponds to an end-of-pattern (-1 if none)
 } ACState;
 
 /* AhoCorasick structure holds the entire automaton */
 typedef struct
 {
-  ACState *states;
-  int num_states; // Number of states currently in use
-  int capacity;   // Current allocated capacity for states
-  int patterns;   // Number of patterns inserted
+    ACState *states;
+    int num_states; // Number of states currently in use
+    int capacity;   // Current allocated capacity for states
+    int patterns;   // Number of patterns inserted
 } AhoCorasick;
 
 /**
